@@ -126,6 +126,12 @@ public function store_test_data($request) {
         error_log('STORE DATA - Received shipping address: ' . json_encode($params['shipping_address']));
     }
     
+    // Store billing address if provided
+    if (!empty($params['billing_address'])) {
+        $data_to_store['billing_address'] = $params['billing_address'];
+        error_log('STORE DATA - Received billing address: ' . json_encode($params['billing_address']));
+    }
+    
     // Only proceed if we have data to store
     if (!empty($data_to_store)) {
         // Store in transient
@@ -427,98 +433,109 @@ private function get_test_data($site_id, $order_id) {
     }
     
     /**
-     * Create a PayPal order
-     */
-    public function create_paypal_order($request) {
-        // Get request JSON
-        $params = $this->get_json_params($request);
-        
-        if (empty($params)) {
+ * Create a PayPal order
+ */
+public function create_paypal_order($request) {
+    // Get request JSON
+    $params = $this->get_json_params($request);
+    
+    if (empty($params)) {
+        return new WP_Error(
+            'invalid_request',
+            __('Invalid request format', 'woo-paypal-proxy-server'),
+            array('status' => 400)
+        );
+    }
+    
+    // Validate required parameters
+    $required_params = array('api_key', 'order_id', 'amount', 'currency');
+    foreach ($required_params as $param) {
+        if (empty($params[$param])) {
             return new WP_Error(
-                'invalid_request',
-                __('Invalid request format', 'woo-paypal-proxy-server'),
+                'missing_param',
+                sprintf(__('Missing required parameter: %s', 'woo-paypal-proxy-server'), $param),
                 array('status' => 400)
             );
         }
-        
-        // Validate required parameters
-        $required_params = array('api_key', 'order_id', 'amount', 'currency');
-        foreach ($required_params as $param) {
-            if (empty($params[$param])) {
-                return new WP_Error(
-                    'missing_param',
-                    sprintf(__('Missing required parameter: %s', 'woo-paypal-proxy-server'), $param),
-                    array('status' => 400)
-                );
-            }
-        }
-        
-        // Validate request signature if available
-        if (!empty($params['timestamp']) && !empty($params['hash'])) {
-            $validation = $this->validate_signature($params['api_key'], $params['timestamp'], $params['hash'], $params['order_id'] . $params['amount']);
-            if (is_wp_error($validation)) {
-                return $validation;
-            }
-        }
-        
-        // Get site by API key
-        $site = $this->get_site_by_api_key($params['api_key']);
-        
-        if (!$site) {
-            return new WP_Error(
-                'invalid_api_key',
-                __('Invalid API key or site not registered', 'woo-paypal-proxy-server'),
-                array('status' => 401)
-            );
-        }
-        
-        
-        $order_data = $this->get_order_data($site->id, $params['order_id']);
-        $custom_data = array();
-        $test_data = $this->get_test_data($site->id, $params['order_id']);
-        
-        if ($test_data) {
-            $custom_data['description'] = $test_data;
-            error_log('CREATE PAYPAL ORDER - Using stored test data: ' . $test_data);
-        } else {
-            error_log('CREATE PAYPAL ORDER - No stored test data found for order: ' . $params['order_id']);
-        }
-        
-        // Add shipping address if available
-        if (!empty($order_data['shipping_address'])) {
-            $custom_data['shipping_address'] = $order_data['shipping_address'];
-            error_log('CREATE ORDER - Using stored shipping address');
-        }
-        
-        // Create PayPal order
-        $paypal_order = $this->paypal_api->create_order(
-            $params['amount'],
-            $params['currency'],
-            $params['order_id'],
-            !empty($params['return_url']) ? $params['return_url'] : '',
-            !empty($params['cancel_url']) ? $params['cancel_url'] : '',
-            $custom_data
-        );
-        
-        if (is_wp_error($paypal_order)) {
-            return new WP_Error(
-                'paypal_error',
-                $paypal_order->get_error_message(),
-                array('status' => 500)
-            );
-        }
-        
-        // Log the transaction
-        $this->log_transaction($site->id, $params['order_id'], $paypal_order['id'], $params['amount'], $params['currency']);
-        
-        // Return the PayPal order details
-        return new WP_REST_Response(array(
-            'success' => true,
-            'order_id' => $paypal_order['id'],
-            'status' => $paypal_order['status'],
-            'links' => $paypal_order['links'],
-        ), 200);
     }
+    
+    // Validate request signature if available
+    if (!empty($params['timestamp']) && !empty($params['hash'])) {
+        $validation = $this->validate_signature($params['api_key'], $params['timestamp'], $params['hash'], $params['order_id'] . $params['amount']);
+        if (is_wp_error($validation)) {
+            return $validation;
+        }
+    }
+    
+    // Get site by API key
+    $site = $this->get_site_by_api_key($params['api_key']);
+    
+    if (!$site) {
+        return new WP_Error(
+            'invalid_api_key',
+            __('Invalid API key or site not registered', 'woo-paypal-proxy-server'),
+            array('status' => 401)
+        );
+    }
+    
+    // Get order data from transient storage
+    $order_data = $this->get_order_data($site->id, $params['order_id']);
+    $custom_data = array();
+    
+    // Add description if available
+    $test_data = $this->get_test_data($site->id, $params['order_id']);
+    if ($test_data) {
+        $custom_data['description'] = $test_data;
+        error_log('CREATE PAYPAL ORDER - Using stored test data: ' . $test_data);
+    } else {
+        error_log('CREATE PAYPAL ORDER - No stored test data found for order: ' . $params['order_id']);
+    }
+    
+    // Add shipping address if available
+    if (!empty($order_data['shipping_address'])) {
+        $custom_data['shipping_address'] = $order_data['shipping_address'];
+        error_log('CREATE ORDER - Using stored shipping address');
+    }
+    
+    // Add billing address if available - THIS IS THE CRITICAL FIX
+    if (!empty($order_data['billing_address'])) {
+        $custom_data['billing_address'] = $order_data['billing_address'];
+        error_log('CREATE ORDER - Using stored billing address: ' . json_encode($order_data['billing_address']));
+    } else {
+        error_log('CREATE ORDER - WARNING: No billing address found in stored data');
+        // Dump the order_data to see what's actually in there
+        error_log('CREATE ORDER - Dumping order_data: ' . json_encode($order_data));
+    }
+    
+    // Create PayPal order
+    $paypal_order = $this->paypal_api->create_order(
+        $params['amount'],
+        $params['currency'],
+        $params['order_id'],
+        !empty($params['return_url']) ? $params['return_url'] : '',
+        !empty($params['cancel_url']) ? $params['cancel_url'] : '',
+        $custom_data
+    );
+    
+    if (is_wp_error($paypal_order)) {
+        return new WP_Error(
+            'paypal_error',
+            $paypal_order->get_error_message(),
+            array('status' => 500)
+        );
+    }
+    
+    // Log the transaction
+    $this->log_transaction($site->id, $params['order_id'], $paypal_order['id'], $params['amount'], $params['currency']);
+    
+    // Return the PayPal order details
+    return new WP_REST_Response(array(
+        'success' => true,
+        'order_id' => $paypal_order['id'],
+        'status' => $paypal_order['status'],
+        'links' => $paypal_order['links'],
+    ), 200);
+}
     
     /**
      * Capture a PayPal payment
@@ -754,12 +771,14 @@ private function validate_request($request) {
     
     if ($data) {
         error_log('GET DATA - Retrieved data for order: ' . $order_id);
+        // Debug log to see exactly what data is being returned
+        error_log('GET DATA - Content of data: ' . json_encode($data));
     } else {
         error_log('GET DATA - No data found for order: ' . $order_id);
     }
     
     return $data;
-}
+    }
     
     /**
      * Log transaction in database
