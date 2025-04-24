@@ -1,0 +1,120 @@
+/**
+ * PayPal Direct Checkout CSS for Website B
+ */
+
+/* PayPal Buttons Container */
+.wppps-paypal-button-container {
+    margin: 20px 0;
+    position: relative;
+    min-height: 150px;
+}
+
+/* Messages */
+.wppps-message,
+.wppps-error {
+    margin: 10px 0;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.wppps-message {
+    background-color: #f8f9fa;
+    border: 1px solid #d6d8db;
+    color: #1e2125;
+}
+
+.wppps-message.wppps-success {
+    background-color: #d1e7dd;
+    border: 1px solid #badbcc;
+    color: #0f5132;
+}
+
+.wppps-error {
+    background-color: #f8d7da;
+    border: 1px solid #f5c2c7;
+    color: #842029;
+}
+
+/* Loading Indicator */
+.wppps-loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+
+.wppps-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: wppps-spin 1s linear infinite;
+    margin-bottom: 10px;
+}
+
+.wppps-loading-text {
+    font-size: 14px;
+    color: #333;
+}
+
+/* Animation for spinner */
+@keyframes wppps-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 768px) {
+    .wppps-paypal-button-container {
+        margin: 15px 0;
+    }
+    
+    .wppps-spinner {
+        width: 30px;
+        height: 30px;
+        border-width: 3px;
+    }
+    
+    .wppps-loading-text {
+        font-size: 12px;
+    }
+}
+
+/* Fix for validation error display */
+.woocommerce-error {
+    list-style: none;
+    padding-left: 0;
+}
+
+.form-row .woocommerce-error {
+    font-size: 12px;
+    margin-top: 5px;
+    color: #b81c23;
+}
+
+/* Fix for checkout place order button */
+.woocommerce-checkout #payment div.payment_box .wc-payment-form {
+    padding: 0;
+    margin: 0;
+    border: none;
+}
+
+.payment_method_paypal_direct .paypal-buttons {
+    width: 100% !important;
+    min-width: 100px !important;
+}
+
+.payment_method_paypal_direct .paypal-buttons iframe {
+    width: 100% !important;
+    min-width: 100px !important;
+}
