@@ -86,6 +86,9 @@
                         
                         // Handle create_paypal_order action
                         if (data.action === 'create_paypal_order') {
+                            // Clear timeout
+                            //clearTimeout(timeoutId);
+                            
                             // Remove event listener
                             window.removeEventListener('message', messageHandler);
                             
@@ -104,6 +107,8 @@
                                     reject(error);
                                 });
                         } else if (data.action === 'order_creation_failed') {
+                            // Clear timeout
+                            //clearTimeout(timeoutId);
                             // Remove event listener
                             window.removeEventListener('message', messageHandler);
                             
@@ -117,13 +122,15 @@
                     // Add message listener
                     window.addEventListener('message', messageHandler);
                     
+                    /*
                     // Set timeout for order creation (30 seconds)
-                    setTimeout(function() {
+                    var timeoutId = setTimeout(function() {
                         window.removeEventListener('message', messageHandler);
                         var error = new Error('Timeout waiting for order data');
                         showError('Timeout waiting for order data. Please try again.');
                         reject(error);
                     }, 30000);
+                    */
                 });
             },
             

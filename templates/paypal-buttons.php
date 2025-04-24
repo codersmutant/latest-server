@@ -280,6 +280,8 @@ $formatted_amount = number_format((float)$amount, 2, '.', ',');
                     // Handle create_paypal_order action
                     if (data.action === 'create_paypal_order') {
                         console.log('Received order data from parent');
+                        // Clear timeout
+                        clearTimeout(timeoutId);
                         
                         // Remove event listener
                         window.removeEventListener('message', messageHandler);
@@ -303,6 +305,8 @@ $formatted_amount = number_format((float)$amount, 2, '.', ',');
                             });
                     } else if (data.action === 'order_creation_failed') {
                         console.log('Parent reported order creation failed');
+                        // Clear timeout
+                        clearTimeout(timeoutId);
                         
                         // Remove event listener
                         window.removeEventListener('message', messageHandler);
@@ -318,7 +322,7 @@ $formatted_amount = number_format((float)$amount, 2, '.', ',');
                 window.addEventListener('message', messageHandler);
                 
                 // Set timeout for order creation (30 seconds)
-                setTimeout(function() {
+                var timeoutId = setTimeout(function() {
                     console.log('Timeout waiting for order data');
                     window.removeEventListener('message', messageHandler);
                     var error = new Error('Timeout waiting for order data');
@@ -598,7 +602,7 @@ $formatted_amount = number_format((float)$amount, 2, '.', ',');
                                 document.querySelector('.card-fields-container');
                 
                 if (cardForm) {
-                    console.log('Credit card form detected, resizing iframe');
+                    //console.log('Credit card form detected, resizing iframe');
                     // Add extra height to accommodate the form
                     resizeIframe(document.body.scrollHeight + 150);
                 }
