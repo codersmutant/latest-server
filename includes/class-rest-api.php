@@ -86,6 +86,9 @@ class WPPPS_REST_API {
     }
     
     
+/**
+ * Store order data from Website A
+ */
 public function store_test_data($request) {
     // Get request JSON
     $params = $this->get_json_params($request);
@@ -115,7 +118,7 @@ public function store_test_data($request) {
     // Prepare data to store
     $data_to_store = array();
     
-    // Store test data if provided
+    // Store description/test data if provided
     if (isset($params['test_data'])) {
         $data_to_store['description'] = sanitize_text_field($params['test_data']);
     }
@@ -132,18 +135,59 @@ public function store_test_data($request) {
         error_log('STORE DATA - Received billing address: ' . json_encode($params['billing_address']));
     }
     
+    // Store line items if provided
+    if (!empty($params['line_items']) && is_array($params['line_items'])) {
+        $data_to_store['line_items'] = $params['line_items'];
+        error_log('STORE DATA - Received ' . count($params['line_items']) . ' line items');
+    }
+    
+    // Store shipping amount if provided
+    if (isset($params['shipping_amount'])) {
+        $data_to_store['shipping_amount'] = (float)$params['shipping_amount'];
+        error_log('STORE DATA - Received shipping amount: ' . $params['shipping_amount']);
+    }
+    
+    // Store shipping tax if provided
+    if (isset($params['shipping_tax'])) {
+        $data_to_store['shipping_tax'] = (float)$params['shipping_tax'];
+    }
+    
+    // Store tax total if provided
+    if (isset($params['tax_total'])) {
+        $data_to_store['tax_total'] = (float)$params['tax_total'];
+        error_log('STORE DATA - Received tax total: ' . $params['tax_total']);
+    }
+    
+    // Store currency if provided
+    if (isset($params['currency'])) {
+        $data_to_store['currency'] = sanitize_text_field($params['currency']);
+    }
+    
+    // Store tax settings
+    if (isset($params['prices_include_tax'])) {
+        $data_to_store['prices_include_tax'] = (bool)$params['prices_include_tax'];
+    }
+    
+    if (isset($params['tax_display_cart'])) {
+        $data_to_store['tax_display_cart'] = sanitize_text_field($params['tax_display_cart']);
+    }
+    
+    if (isset($params['tax_display_shop'])) {
+        $data_to_store['tax_display_shop'] = sanitize_text_field($params['tax_display_shop']);
+    }
+    
     // Only proceed if we have data to store
     if (!empty($data_to_store)) {
         // Store in transient
         $transient_key = 'wppps_order_data_' . $site->id . '_' . $params['order_id'];
         set_transient($transient_key, $data_to_store, 24 * HOUR_IN_SECONDS);
-        error_log('STORE DATA - Stored data for order: ' . $params['order_id']);
+        error_log('STORE DATA - Stored detailed order data for order: ' . $params['order_id']);
     }
     
     // Return success
     return new WP_REST_Response(array(
         'success' => true,
-        'message' => 'Data stored successfully',
+        'message' => 'Order data stored successfully',
     ), 200);
 }
 
@@ -432,7 +476,7 @@ private function get_test_data($site_id, $order_id) {
         ), 200);
     }
     
-    /**
+/**
  * Create a PayPal order
  */
 public function create_paypal_order($request) {
@@ -480,31 +524,47 @@ public function create_paypal_order($request) {
     
     // Get order data from transient storage
     $order_data = $this->get_order_data($site->id, $params['order_id']);
+    error_log('Retrieved order data: ' . json_encode($order_data));
+    
     $custom_data = array();
     
     // Add description if available
-    $test_data = $this->get_test_data($site->id, $params['order_id']);
-    if ($test_data) {
-        $custom_data['description'] = $test_data;
-        error_log('CREATE PAYPAL ORDER - Using stored test data: ' . $test_data);
-    } else {
-        error_log('CREATE PAYPAL ORDER - No stored test data found for order: ' . $params['order_id']);
+    if (!empty($order_data['description'])) {
+        $custom_data['description'] = $order_data['description'];
     }
     
     // Add shipping address if available
     if (!empty($order_data['shipping_address'])) {
         $custom_data['shipping_address'] = $order_data['shipping_address'];
-        error_log('CREATE ORDER - Using stored shipping address');
+        error_log('Using stored shipping address');
     }
     
-    // Add billing address if available - THIS IS THE CRITICAL FIX
+    // Add billing address if available
     if (!empty($order_data['billing_address'])) {
         $custom_data['billing_address'] = $order_data['billing_address'];
-        error_log('CREATE ORDER - Using stored billing address: ' . json_encode($order_data['billing_address']));
-    } else {
-        error_log('CREATE ORDER - WARNING: No billing address found in stored data');
-        // Dump the order_data to see what's actually in there
-        error_log('CREATE ORDER - Dumping order_data: ' . json_encode($order_data));
+        error_log('Using stored billing address');
+    }
+    
+    // Add line items if available
+    if (!empty($order_data['line_items'])) {
+        $custom_data['line_items'] = $order_data['line_items'];
+        error_log('Using ' . count($order_data['line_items']) . ' stored line items');
+    }
+    
+    // Add shipping amount if available
+    if (isset($order_data['shipping_amount'])) {
+        $custom_data['shipping_amount'] = $order_data['shipping_amount'];
+        error_log('Using stored shipping amount: ' . $order_data['shipping_amount']);
+    }
+    
+    // Add shipping tax if available
+    if (isset($order_data['shipping_tax'])) {
+        $custom_data['shipping_tax'] = $order_data['shipping_tax'];
+    }
+    
+    // Add tax total if available
+    if (isset($order_data['tax_total'])) {
+        $custom_data['tax_total'] = $order_data['tax_total'];
     }
     
     // Create PayPal order

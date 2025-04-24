@@ -128,10 +128,10 @@ class WPPPS_PayPal_API {
         return $this->access_token;
     }
     
-    /**
- * Create PayPal order
+/**
+ * Create PayPal order with detailed breakdown
  */
-public function create_order($amount, $currency = 'USD', $reference_id = '', $return_url = '', $cancel_url = '',  $custom_data = array()) {
+public function create_order($amount, $currency = 'USD', $reference_id = '', $return_url = '', $cancel_url = '', $custom_data = array()) {
     // Get access token
     $access_token = $this->get_access_token();
     
@@ -142,7 +142,7 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
     // Set API endpoint
     $endpoint = $this->api_url . '/v2/checkout/orders';
     
-    // Build request body
+    // Build request body with basic structure
     $payload = array(
         'intent' => 'CAPTURE',
         'purchase_units' => array(
@@ -153,10 +153,9 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
                 ),
             ),
         ),
-        // Start with a basic application context
         'application_context' => array(
             'shipping_preference' => !empty($custom_data['shipping_address']) ? 'SET_PROVIDED_ADDRESS' : 'GET_FROM_FILE',
-            'billing_preference' => 'NO_BILLING',  // This is the key setting
+            'billing_preference' => 'NO_BILLING',
             'user_action' => 'PAY_NOW',
             'brand_name' => get_bloginfo('name'),
             'landing_page' => 'BILLING',
@@ -168,19 +167,171 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
         $payload['purchase_units'][0]['reference_id'] = $reference_id;
     }
     
-    // Add description if provided in custom data
+    // Add description if provided
     if (!empty($custom_data['description'])) {
         $payload['purchase_units'][0]['description'] = $custom_data['description'];
         $this->log_info('Adding description to PayPal API request: ' . $custom_data['description']);
     }
     
-    // Add return and cancel URLs if provided
-    if (!empty($return_url) && !empty($cancel_url)) {
-        $payload['application_context']['return_url'] = $return_url;
-        $payload['application_context']['cancel_url'] = $cancel_url;
+    // Process line items if available
+    $has_line_items = !empty($custom_data['line_items']) && is_array($custom_data['line_items']);
+    $this->log_info('Processing line items: ' . ($has_line_items ? 'Yes' : 'No'));
+    
+    if ($has_line_items) {
+        $this->log_info('Number of line items: ' . count($custom_data['line_items']));
+        
+        // Initialize amounts for breakdown
+        $item_total = 0;
+        $tax_total = 0;
+        $shipping_total = isset($custom_data['shipping_amount']) ? floatval($custom_data['shipping_amount']) : 0;
+        $this->log_info('Initial shipping amount: ' . $shipping_total);
+        
+        // Prepare items array for PayPal
+        $items = array();
+        
+        foreach ($custom_data['line_items'] as $item) {
+            // Validate item data
+            if (empty($item['name']) || !isset($item['quantity']) || !isset($item['unit_price'])) {
+                $this->log_info('Skipping invalid line item: ' . json_encode($item));
+                continue;
+            }
+            
+            $unit_price = floatval($item['unit_price']);
+            $quantity = intval($item['quantity']);
+            $line_total = $unit_price * $quantity;
+            
+            // Add to item total
+            $item_total += $line_total;
+            
+            // Add tax if provided
+            if (!empty($item['tax_amount'])) {
+                $tax_total += floatval($item['tax_amount']);
+            }
+            
+            // Create the item for PayPal
+            $paypal_item = array(
+                'name' => substr($item['name'], 0, 127), // PayPal limits name to 127 chars
+                'unit_amount' => array(
+                    'currency_code' => $currency,
+                    'value' => number_format($unit_price, 2, '.', '')
+                ),
+                'quantity' => $quantity
+            );
+            
+            // Add description if available
+            if (!empty($item['description'])) {
+                $paypal_item['description'] = substr($item['description'], 0, 127);
+            }
+            
+            // Add SKU if available
+            if (!empty($item['sku'])) {
+                $paypal_item['sku'] = substr($item['sku'], 0, 50);
+            }
+            
+            $items[] = $paypal_item;
+            $this->log_info('Added item: ' . $item['name'] . ' x ' . $quantity . ' @ ' . $unit_price);
+        }
+        
+        // Log the breakdown totals
+        $this->log_info('Calculated item_total: ' . $item_total);
+        $this->log_info('Calculated tax_total: ' . $tax_total);
+        $this->log_info('Calculated shipping_total: ' . $shipping_total);
+        
+        // Apply the breakdown only if we have valid totals
+        if (!empty($items) && $item_total > 0) {
+            // Create breakdown with correct values
+            $breakdown = array(
+                'item_total' => array(
+                    'currency_code' => $currency,
+                    'value' => number_format($item_total, 2, '.', '')
+                )
+            );
+            
+            // Only add tax if it's greater than zero
+            if ($tax_total > 0) {
+                $breakdown['tax_total'] = array(
+                    'currency_code' => $currency,
+                    'value' => number_format($tax_total, 2, '.', '')
+                );
+            }
+            
+            // Only add shipping if it's greater than zero
+            if ($shipping_total > 0) {
+                $breakdown['shipping'] = array(
+                    'currency_code' => $currency,
+                    'value' => number_format($shipping_total, 2, '.', '')
+                );
+            } else {
+                // Still include shipping with zero value for clarity
+                $breakdown['shipping'] = array(
+                    'currency_code' => $currency,
+                    'value' => '0.00'
+                );
+            }
+            
+            // Calculate expected total
+            $expected_total = $item_total + $shipping_total + $tax_total;
+            $actual_total = floatval($amount);
+            
+            $this->log_info('Expected total: ' . $expected_total);
+            $this->log_info('Actual total: ' . $actual_total);
+            
+            // If the totals don't match, adjust one of the components to make it balance
+            if (abs($expected_total - $actual_total) > 0.01) {
+                $this->log_info('Totals don\'t match. Adjusting...');
+                
+                // Calculate the difference
+                $difference = $actual_total - $expected_total;
+                
+                // If shipping is present, adjust it first
+                if ($shipping_total > 0) {
+                    $shipping_total += $difference;
+                    $breakdown['shipping']['value'] = number_format($shipping_total, 2, '.', '');
+                    $this->log_info('Adjusted shipping to: ' . $shipping_total);
+                } 
+                // Otherwise, adjust item_total
+                else {
+                    $item_total += $difference;
+                    $breakdown['item_total']['value'] = number_format($item_total, 2, '.', '');
+                    $this->log_info('Adjusted item_total to: ' . $item_total);
+                }
+            }
+            
+            // Set the breakdown and items in the payload
+            $payload['purchase_units'][0]['amount']['breakdown'] = $breakdown;
+            $payload['purchase_units'][0]['items'] = $items;
+            
+            $this->log_info('Added breakdown and ' . count($items) . ' line items to payload');
+        } else {
+            $this->log_info('No valid items or item_total is zero, skipping detailed breakdown');
+        }
+    }
+    // Even if no line items, still add shipping breakdown if available
+    else if (isset($custom_data['shipping_amount']) && floatval($custom_data['shipping_amount']) > 0) {
+        $shipping_total = floatval($custom_data['shipping_amount']);
+        $item_total = floatval($amount) - $shipping_total;
+        
+        if ($item_total >= 0) {
+            $payload['purchase_units'][0]['amount']['breakdown'] = array(
+                'item_total' => array(
+                    'currency_code' => $currency,
+                    'value' => number_format($item_total, 2, '.', '')
+                ),
+                'shipping' => array(
+                    'currency_code' => $currency,
+                    'value' => number_format($shipping_total, 2, '.', '')
+                ),
+                'tax_total' => array(
+                    'currency_code' => $currency,
+                    'value' => '0.00'
+                )
+            );
+            
+            $this->log_info('Added basic breakdown with shipping: ' . $shipping_total);
+        }
     }
     
-    // Add billing address if provided - THIS IS CRITICAL
+    // Add billing address if provided
     if (!empty($custom_data['billing_address'])) {
         $this->log_info('Adding billing address to PayPal request');
         
@@ -231,9 +382,6 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
             )
         );
         
-        // Log the formatted shipping data
-        $this->log_info('Formatted shipping data: ' . json_encode($formatted_shipping));
-        
         // Add shipping to payload
         $payload['purchase_units'][0]['shipping'] = $formatted_shipping;
     }
@@ -249,6 +397,7 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
         'timeout' => 30,
     );
     
+    // Log the complete payload for debugging
     $this->log_info('PayPal order creation payload: ' . json_encode($payload));
     
     // Make the request
