@@ -183,6 +183,8 @@ function wppps_add_gateway($gateways) {
 /**
  * AJAX handler for creating a WooCommerce order
  */
+
+
 function wppps_create_order_handler() {
     check_ajax_referer('wppps-paypal-nonce', 'nonce');
     
@@ -291,12 +293,16 @@ function wppps_create_order_handler() {
         }
         $order->set_address($shipping_address, 'shipping');
         
-        // Add shipping method
+        // Add shipping method - IMPROVED VERSION
         if (WC()->session) {
             $chosen_shipping_methods = WC()->session->get('chosen_shipping_methods');
+            $shipping_packages = WC()->shipping()->get_packages();
             
             if (!empty($chosen_shipping_methods)) {
-                foreach (WC()->shipping()->get_packages() as $package_key => $package) {
+                error_log('PayPal Direct - Found chosen shipping methods: ' . json_encode($chosen_shipping_methods));
+                error_log('PayPal Direct - Shipping packages: ' . json_encode($shipping_packages));
+                
+                foreach ($shipping_packages as $package_key => $package) {
                     if (isset($chosen_shipping_methods[$package_key], $package['rates'][$chosen_shipping_methods[$package_key]])) {
                         $shipping_rate = $package['rates'][$chosen_shipping_methods[$package_key]];
                         
@@ -304,18 +310,138 @@ function wppps_create_order_handler() {
                         $item->set_props(array(
                             'method_title' => $shipping_rate->get_label(),
                             'method_id'    => $shipping_rate->get_id(),
+                            'instance_id'  => $shipping_rate->get_instance_id(),
                             'total'        => wc_format_decimal($shipping_rate->get_cost()),
                             'taxes'        => $shipping_rate->get_taxes(),
                         ));
                         
+                        // Add any meta data
                         foreach ($shipping_rate->get_meta_data() as $key => $value) {
                             $item->add_meta_data($key, $value, true);
                         }
                         
                         $order->add_item($item);
+                        error_log('PayPal Direct - Added shipping method: ' . $shipping_rate->get_label() . ' with cost: ' . $shipping_rate->get_cost());
+                    }
+                }
+            } else {
+                // FALLBACK: Try to get shipping method directly from POST data
+                error_log('PayPal Direct - No chosen shipping methods in session, checking POST data');
+                
+                if (!empty($checkout_form_data['shipping_method']) && is_array($checkout_form_data['shipping_method'])) {
+                    foreach ($checkout_form_data['shipping_method'] as $package_key => $method_id) {
+                        // Try to find the shipping rate
+                        if (!empty($shipping_packages[$package_key]['rates'][$method_id])) {
+                            $shipping_rate = $shipping_packages[$package_key]['rates'][$method_id];
+                            
+                            $item = new WC_Order_Item_Shipping();
+                            $item->set_props(array(
+                                'method_title' => $shipping_rate->get_label(),
+                                'method_id'    => $shipping_rate->get_id(),
+                                'instance_id'  => $shipping_rate->get_instance_id(),
+                                'total'        => wc_format_decimal($shipping_rate->get_cost()),
+                                'taxes'        => $shipping_rate->get_taxes(),
+                            ));
+                            
+                            $order->add_item($item);
+                            error_log('PayPal Direct - Added shipping method from POST: ' . $shipping_rate->get_label());
+                        }
+                    }
+                } else if (!empty($checkout_form_data['shipping_method']) && is_string($checkout_form_data['shipping_method'])) {
+                    // Handle single shipping method as string
+                    $method_id = $checkout_form_data['shipping_method'];
+                    
+                    // Try to find this method in available packages
+                    foreach ($shipping_packages as $package_key => $package) {
+                        if (!empty($package['rates'][$method_id])) {
+                            $shipping_rate = $package['rates'][$method_id];
+                            
+                            $item = new WC_Order_Item_Shipping();
+                            $item->set_props(array(
+                                'method_title' => $shipping_rate->get_label(),
+                                'method_id'    => $shipping_rate->get_id(),
+                                'instance_id'  => $shipping_rate->get_instance_id(),
+                                'total'        => wc_format_decimal($shipping_rate->get_cost()),
+                                'taxes'        => $shipping_rate->get_taxes(),
+                            ));
+                            
+                            $order->add_item($item);
+                            error_log('PayPal Direct - Added shipping method from string: ' . $shipping_rate->get_label());
+                            break;
+                        }
                     }
                 }
             }
+            
+            // LAST RESORT: If still no shipping but cart has shipping, add a generic shipping line
+if ($order->get_shipping_total() <= 0 && WC()->cart && WC()->cart->get_shipping_total() > 0) {
+    $shipping_total = WC()->cart->get_shipping_total();
+    error_log('PayPal Direct - Adding shipping from cart: ' . $shipping_total);
+    
+    // Default values
+    $shipping_method_title = 'Shipping'; // default fallback
+    $shipping_method_id = 'flat_rate';   // default fallback
+    $instance_id = '';
+    
+    // Get the chosen shipping methods
+    $chosen_shipping_methods = WC()->session->get('chosen_shipping_methods');
+    
+    if (!empty($chosen_shipping_methods)) {
+        // Get the first chosen method (most sites only have one package)
+        $chosen_method = reset($chosen_shipping_methods);
+        error_log('PayPal Direct - Chosen method ID: ' . $chosen_method);
+        
+        // Parse the shipping method ID (format is usually method_id:instance_id)
+        $method_parts = explode(':', $chosen_method);
+        $method_id = $method_parts[0];
+        $instance_id = isset($method_parts[1]) ? $method_parts[1] : '';
+        
+        $shipping_method_id = $method_id;
+        
+        // Try to find the method in shipping zones
+        foreach (WC_Shipping_Zones::get_zones() as $zone) {
+            foreach ($zone['shipping_methods'] as $method) {
+                if ($method->id . ':' . $method->instance_id === $chosen_method) {
+                    $shipping_method_title = $method->get_title();
+                    error_log('PayPal Direct - Found method in zones: ' . $shipping_method_title);
+                    break 2; // Break both loops
+                }
+            }
+        }
+        
+        // If not found in zones, check the "rest of the world" zone
+        if ($shipping_method_title === 'Shipping') {
+            $rest_of_world = new WC_Shipping_Zone(0);
+            $shipping_methods = $rest_of_world->get_shipping_methods();
+            
+            foreach ($shipping_methods as $method) {
+                if ($method->id . ':' . $method->instance_id === $chosen_method) {
+                    $shipping_method_title = $method->get_title();
+                    error_log('PayPal Direct - Found method in rest of world zone: ' . $shipping_method_title);
+                    break;
+                }
+            }
+        }
+        
+        error_log('PayPal Direct - Using shipping method title: ' . $shipping_method_title);
+    }
+    
+    $item = new WC_Order_Item_Shipping();
+    $item->set_props(array(
+        'method_title' => $shipping_method_title,
+        'method_id'    => $shipping_method_id,
+        'total'        => wc_format_decimal($shipping_total),
+        'taxes'        => WC()->cart->get_shipping_taxes(),
+    ));
+    
+    // Add instance ID if available
+    if (!empty($instance_id)) {
+        $item->set_instance_id($instance_id);
+    }
+    
+    $order->add_item($item);
+    error_log('PayPal Direct - Added shipping with title: ' . $shipping_method_title);
+}
         }
         
         // Add cart items
@@ -385,6 +511,13 @@ function wppps_create_order_handler() {
         
         // Calculate totals
         $order->calculate_totals();
+        
+        // Log the order totals to debug shipping issues
+        error_log('PayPal Direct - Order Totals:');
+        error_log('PayPal Direct - Subtotal: ' . $order->get_subtotal());
+        error_log('PayPal Direct - Shipping Total: ' . $order->get_shipping_total());
+        error_log('PayPal Direct - Tax Total: ' . $order->get_total_tax());
+        error_log('PayPal Direct - Grand Total: ' . $order->get_total());
         
         // Update order status
         $order->update_status('pending', __('Order created, awaiting PayPal payment', 'woo-paypal-proxy-server'));
@@ -480,6 +613,24 @@ function wppps_create_paypal_order_handler() {
         $shipping_amount = $order->get_shipping_total();
         $shipping_tax = $order->get_shipping_tax();
         
+        // Log shipping amount to verify it's actually present
+        error_log('PayPal Direct - Order shipping amount: ' . $shipping_amount);
+        
+        // Get shipping methods from order
+        $shipping_items = $order->get_items('shipping');
+        $shipping_methods = array();
+        
+        foreach ($shipping_items as $shipping_item) {
+            $shipping_methods[] = array(
+                'method_title' => $shipping_item->get_method_title(),
+                'method_id' => $shipping_item->get_method_id(),
+                'instance_id' => $shipping_item->get_instance_id(),
+                'total' => $shipping_item->get_total(),
+                'total_tax' => $shipping_item->get_total_tax(),
+            );
+            error_log('PayPal Direct - Shipping method: ' . $shipping_item->get_method_title() . ' - ' . $shipping_item->get_total());
+        }
+        
         // Prepare billing address
         $billing_address = array(
             'first_name' => $order->get_billing_first_name(),
@@ -511,6 +662,7 @@ function wppps_create_paypal_order_handler() {
             'line_items' => $line_items,
             'shipping_amount' => $shipping_amount,
             'shipping_tax' => $shipping_tax,
+            'shipping_methods' => $shipping_methods,
             'tax_total' => $order->get_total_tax(),
             'billing_address' => $billing_address,
             'shipping_address' => $shipping_address,
