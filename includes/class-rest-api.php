@@ -135,11 +135,36 @@ public function store_test_data($request) {
         error_log('STORE DATA - Received billing address: ' . json_encode($params['billing_address']));
     }
     
+   
     // Store line items if provided
-    if (!empty($params['line_items']) && is_array($params['line_items'])) {
-        $data_to_store['line_items'] = $params['line_items'];
-        error_log('STORE DATA - Received ' . count($params['line_items']) . ' line items');
+if (!empty($params['line_items']) && is_array($params['line_items'])) {
+    // Process line items for mapped products
+    foreach ($params['line_items'] as $key => $item) {
+        // If this item has a mapped product ID, look up the product details
+        if (!empty($item['mapped_product_id'])) {
+            $mapped_product_id = intval($item['mapped_product_id']);
+            $mapped_product = wc_get_product($mapped_product_id);
+            
+            if ($mapped_product) {
+                // Replace product details but keep pricing from Website A
+                $params['line_items'][$key]['name'] = $mapped_product->get_name();
+                $params['line_items'][$key]['sku'] = $mapped_product->get_sku();
+                $params['line_items'][$key]['description'] = $mapped_product->get_short_description() ? 
+                    substr(wp_strip_all_tags($mapped_product->get_short_description()), 0, 127) : '';
+                
+                // Store the actual product ID for reference
+                $params['line_items'][$key]['actual_product_id'] = $mapped_product_id;
+                
+                error_log('STORE DATA - Mapped product ID ' . $item['product_id'] . ' to ' . $mapped_product_id . ': ' . $mapped_product->get_name());
+            } else {
+                error_log('STORE DATA - Mapped product ID ' . $mapped_product_id . ' not found');
+            }
+        }
     }
+    
+    $data_to_store['line_items'] = $params['line_items'];
+    error_log('STORE DATA - Processed ' . count($params['line_items']) . ' line items with mappings');
+}
     
     // Store shipping amount if provided
     if (isset($params['shipping_amount'])) {
