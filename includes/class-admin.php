@@ -587,21 +587,97 @@ class WPPPS_Admin {
      * Transactions log page
      */
     public function transactions_page() {
-        // Get transactions from database
-        $transactions = $this->get_transactions();
+    // Process bulk actions if submitted
+    $this->process_bulk_actions();
+    
+    // Get current page
+    $current_page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+    $per_page = 20; // Transactions per page
+    
+    // Get transactions from database with pagination
+    $transactions = $this->get_transactions($per_page, $current_page);
+    
+    // Get total count for pagination
+    global $wpdb;
+    $log_table = $wpdb->prefix . 'wppps_transaction_log';
+    $total_items = $wpdb->get_var("SELECT COUNT(*) FROM $log_table");
+    $total_pages = ceil($total_items / $per_page);
+    
+    // Add screen option for pagination
+    add_screen_option('per_page', array(
+        'label' => __('Transactions per page', 'woo-paypal-proxy-server'),
+        'default' => 20,
+        'option' => 'wppps_transactions_per_page'
+    ));
+    
+    ?>
+    <div class="wrap">
+        <h1><?php _e('Transaction Log', 'woo-paypal-proxy-server'); ?></h1>
+        
+        <hr class="wp-header-end">
+        
+        <div class="notice notice-info">
+            <p><?php _e('View all PayPal transactions processed through this proxy.', 'woo-paypal-proxy-server'); ?></p>
+        </div>
+        
+        <?php
+        // Show admin notices for actions
+        if (isset($_GET['deleted']) && $_GET['deleted'] > 0) {
+            $count = intval($_GET['deleted']);
+            $message = sprintf(_n('%s transaction deleted successfully.', '%s transactions deleted successfully.', $count, 'woo-paypal-proxy-server'), $count);
+            echo '<div class="notice notice-success is-dismissible"><p>' . $message . '</p></div>';
+        }
         ?>
-        <div class="wrap">
-            <h1><?php _e('Transaction Log', 'woo-paypal-proxy-server'); ?></h1>
+        
+        <form id="transactions-filter" method="get" action="">
+            <input type="hidden" name="page" value="wppps-transactions" />
             
-            <hr class="wp-header-end">
+            <?php
+            // Nonce for security
+            wp_nonce_field('bulk-transactions', '_wpnonce');
             
-            <div class="notice notice-info">
-                <p><?php _e('View all PayPal transactions processed through this proxy.', 'woo-paypal-proxy-server'); ?></p>
+            // Table wrapper
+            ?>
+            <div class="tablenav top">
+                <div class="alignleft actions bulkactions">
+                    <label for="bulk-action-selector-top" class="screen-reader-text"><?php _e('Select bulk action', 'woo-paypal-proxy-server'); ?></label>
+                    <select name="action" id="bulk-action-selector-top">
+                        <option value="-1"><?php _e('Bulk Actions', 'woo-paypal-proxy-server'); ?></option>
+                        <option value="delete"><?php _e('Delete', 'woo-paypal-proxy-server'); ?></option>
+                    </select>
+                    <input type="submit" id="doaction" class="button action" value="<?php esc_attr_e('Apply', 'woo-paypal-proxy-server'); ?>">
+                </div>
+                
+                <?php if ($total_pages > 1) : ?>
+                <div class="tablenav-pages">
+                    <span class="displaying-num">
+                        <?php printf(_n('%s item', '%s items', $total_items, 'woo-paypal-proxy-server'), number_format_i18n($total_items)); ?>
+                    </span>
+                    <span class="pagination-links">
+                        <?php
+                        echo paginate_links(array(
+                            'base' => add_query_arg('paged', '%#%'),
+                            'format' => '',
+                            'prev_text' => '&laquo;',
+                            'next_text' => '&raquo;',
+                            'total' => $total_pages,
+                            'current' => $current_page,
+                        ));
+                        ?>
+                    </span>
+                </div>
+                <?php endif; ?>
+                
+                <br class="clear">
             </div>
             
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                     <tr>
+                        <td id="cb" class="manage-column column-cb check-column">
+                            <label class="screen-reader-text" for="cb-select-all-1"><?php _e('Select All', 'woo-paypal-proxy-server'); ?></label>
+                            <input id="cb-select-all-1" type="checkbox">
+                        </td>
                         <th scope="col"><?php _e('ID', 'woo-paypal-proxy-server'); ?></th>
                         <th scope="col"><?php _e('Site', 'woo-paypal-proxy-server'); ?></th>
                         <th scope="col"><?php _e('Order ID', 'woo-paypal-proxy-server'); ?></th>
@@ -610,16 +686,21 @@ class WPPPS_Admin {
                         <th scope="col"><?php _e('Status', 'woo-paypal-proxy-server'); ?></th>
                         <th scope="col"><?php _e('Created', 'woo-paypal-proxy-server'); ?></th>
                         <th scope="col"><?php _e('Completed', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Actions', 'woo-paypal-proxy-server'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($transactions)) : ?>
                         <tr>
-                            <td colspan="8"><?php _e('No transactions recorded yet.', 'woo-paypal-proxy-server'); ?></td>
+                            <td colspan="10"><?php _e('No transactions recorded yet.', 'woo-paypal-proxy-server'); ?></td>
                         </tr>
                     <?php else : ?>
                         <?php foreach ($transactions as $transaction) : ?>
                             <tr>
+                                <th scope="row" class="check-column">
+                                    <label class="screen-reader-text" for="cb-select-<?php echo $transaction->id; ?>"><?php printf(__('Select transaction %s', 'woo-paypal-proxy-server'), $transaction->id); ?></label>
+                                    <input id="cb-select-<?php echo $transaction->id; ?>" type="checkbox" name="transaction[]" value="<?php echo $transaction->id; ?>">
+                                </th>
                                 <td><?php echo esc_html($transaction->id); ?></td>
                                 <td><?php echo esc_html($transaction->site_name); ?></td>
                                 <td><?php echo esc_html($transaction->order_id); ?></td>
@@ -638,30 +719,146 @@ class WPPPS_Admin {
                                         &mdash;
                                     <?php endif; ?>
                                 </td>
+                                <td>
+                                    <a href="#" class="delete-transaction" data-id="<?php echo esc_attr($transaction->id); ?>" data-nonce="<?php echo wp_create_nonce('delete_transaction_' . $transaction->id); ?>"><?php _e('Delete', 'woo-paypal-proxy-server'); ?></a>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </tbody>
+                <tfoot>
+                    <tr>
+                        <td class="manage-column column-cb check-column">
+                            <label class="screen-reader-text" for="cb-select-all-2"><?php _e('Select All', 'woo-paypal-proxy-server'); ?></label>
+                            <input id="cb-select-all-2" type="checkbox">
+                        </td>
+                        <th scope="col"><?php _e('ID', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Site', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Order ID', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('PayPal Order ID', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Amount', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Status', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Created', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Completed', 'woo-paypal-proxy-server'); ?></th>
+                        <th scope="col"><?php _e('Actions', 'woo-paypal-proxy-server'); ?></th>
+                    </tr>
+                </tfoot>
             </table>
             
-            <style>
-                .status-pending {
-                    color: orange;
-                }
-                .status-completed {
-                    color: green;
-                    font-weight: bold;
-                }
-                .status-failed {
-                    color: red;
-                }
-                .status-cancelled {
-                    color: gray;
-                }
-            </style>
-        </div>
-        <?php
-    }
+            <div class="tablenav bottom">
+                <div class="alignleft actions bulkactions">
+                    <label for="bulk-action-selector-bottom" class="screen-reader-text"><?php _e('Select bulk action', 'woo-paypal-proxy-server'); ?></label>
+                    <select name="action2" id="bulk-action-selector-bottom">
+                        <option value="-1"><?php _e('Bulk Actions', 'woo-paypal-proxy-server'); ?></option>
+                        <option value="delete"><?php _e('Delete', 'woo-paypal-proxy-server'); ?></option>
+                    </select>
+                    <input type="submit" id="doaction2" class="button action" value="<?php esc_attr_e('Apply', 'woo-paypal-proxy-server'); ?>">
+                </div>
+                
+                <?php if ($total_pages > 1) : ?>
+                <div class="tablenav-pages">
+                    <span class="displaying-num">
+                        <?php printf(_n('%s item', '%s items', $total_items, 'woo-paypal-proxy-server'), number_format_i18n($total_items)); ?>
+                    </span>
+                    <span class="pagination-links">
+                        <?php
+                        echo paginate_links(array(
+                            'base' => add_query_arg('paged', '%#%'),
+                            'format' => '',
+                            'prev_text' => '&laquo;',
+                            'next_text' => '&raquo;',
+                            'total' => $total_pages,
+                            'current' => $current_page,
+                        ));
+                        ?>
+                    </span>
+                </div>
+                <?php endif; ?>
+                
+                <br class="clear">
+            </div>
+        </form>
+        
+        <style>
+            .status-pending {
+                color: orange;
+            }
+            .status-completed {
+                color: green;
+                font-weight: bold;
+            }
+            .status-failed {
+                color: red;
+            }
+            .status-cancelled {
+                color: gray;
+            }
+        </style>
+        
+        <script type="text/javascript">
+            jQuery(document).ready(function($) {
+                // Handle individual delete links
+                $('.delete-transaction').on('click', function(e) {
+                    e.preventDefault();
+                    
+                    if (!confirm('<?php _e('Are you sure you want to delete this transaction?', 'woo-paypal-proxy-server'); ?>')) {
+                        return;
+                    }
+                    
+                    var transactionId = $(this).data('id');
+                    var nonce = $(this).data('nonce');
+                    var $row = $(this).closest('tr');
+                    
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'wppps_delete_transaction',
+                            transaction_id: transactionId,
+                            nonce: nonce
+                        },
+                        beforeSend: function() {
+                            $row.css('opacity', '0.5');
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                $row.fadeOut(400, function() {
+                                    $row.remove();
+                                    
+                                    // If no more rows, add empty message
+                                    if ($('tbody tr').length === 0) {
+                                        $('tbody').html('<tr><td colspan="10"><?php _e('No transactions recorded yet.', 'woo-paypal-proxy-server'); ?></td></tr>');
+                                    }
+                                });
+                            } else {
+                                alert(response.data.message);
+                                $row.css('opacity', '1');
+                            }
+                        },
+                        error: function() {
+                            alert('<?php _e('An error occurred. Please try again.', 'woo-paypal-proxy-server'); ?>');
+                            $row.css('opacity', '1');
+                        }
+                    });
+                });
+                
+                // Confirm bulk delete
+                $('#transactions-filter').on('submit', function(e) {
+                    var action = $('#bulk-action-selector-top').val();
+                    var action2 = $('#bulk-action-selector-bottom').val();
+                    
+                    if ((action === 'delete' || action2 === 'delete') && $('input[name="transaction[]"]:checked').length > 0) {
+                        if (!confirm('<?php _e('Are you sure you want to delete these transactions?', 'woo-paypal-proxy-server'); ?>')) {
+                            e.preventDefault();
+                        }
+                    }
+                });
+            });
+        </script>
+    </div>
+    <?php
+}
+
     
     /**
      * PayPal settings callback
@@ -951,24 +1148,7 @@ class WPPPS_Admin {
         return $wpdb->get_results("SELECT * FROM $table_name ORDER BY created_at DESC");
     }
     
-    /**
-     * Get transaction log
-     */
-    private function get_transactions($limit = 100) {
-        global $wpdb;
-        $log_table = $wpdb->prefix . 'wppps_transaction_log';
-        $sites_table = $wpdb->prefix . 'wppps_sites';
-        
-        $query = "
-            SELECT l.*, s.site_name
-            FROM $log_table AS l
-            LEFT JOIN $sites_table AS s ON l.site_id = s.id
-            ORDER BY l.created_at DESC
-            LIMIT %d
-        ";
-        
-        return $wpdb->get_results($wpdb->prepare($query, $limit));
-    }
+    
     
     /**
      * Get site by ID
@@ -1020,4 +1200,116 @@ class WPPPS_Admin {
         
         wp_die();
     }
+    
+    
+    /**
+ * Process bulk actions
+ */
+private function process_bulk_actions() {
+    // Check if this is the transactions page
+    if (!isset($_GET['page']) || $_GET['page'] !== 'wppps-transactions') {
+        return;
+    }
+    
+    // Check if we have an action
+    $action = '';
+    if (isset($_GET['action']) && $_GET['action'] != -1) {
+        $action = $_GET['action'];
+    } elseif (isset($_GET['action2']) && $_GET['action2'] != -1) {
+        $action = $_GET['action2'];
+    }
+    
+    if ($action !== 'delete') {
+        return;
+    }
+    
+    // Check nonce
+    check_admin_referer('bulk-transactions');
+    
+    // Check permissions
+    if (!current_user_can('manage_options')) {
+        wp_die(__('You do not have sufficient permissions to access this page.', 'woo-paypal-proxy-server'));
+    }
+    
+    // Get selected transactions
+    $transaction_ids = isset($_GET['transaction']) ? array_map('intval', $_GET['transaction']) : array();
+    
+    if (empty($transaction_ids)) {
+        return;
+    }
+    
+    // Delete transactions
+    $deleted = $this->bulk_delete_transactions($transaction_ids);
+    
+    // Redirect to avoid reprocessing on refresh
+    wp_redirect(add_query_arg('deleted', $deleted, admin_url('admin.php?page=wppps-transactions')));
+    exit;
+}
+
+/**
+ * Delete a single transaction
+ */
+public function delete_transaction($transaction_id) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'wppps_transaction_log';
+    
+    $result = $wpdb->delete(
+        $table_name,
+        array('id' => $transaction_id),
+        array('%d')
+    );
+    
+    return $result;
+}
+
+/**
+ * Bulk delete transactions
+ */
+public function bulk_delete_transactions($transaction_ids) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'wppps_transaction_log';
+    
+    if (empty($transaction_ids)) {
+        return 0;
+    }
+    
+    // Make sure all IDs are integers
+    $transaction_ids = array_map('intval', $transaction_ids);
+    
+    // Create placeholder string (e.g., "%d, %d, %d")
+    $placeholders = implode(', ', array_fill(0, count($transaction_ids), '%d'));
+    
+    // Delete the transactions
+    $query = $wpdb->prepare(
+        "DELETE FROM $table_name WHERE id IN ($placeholders)",
+        $transaction_ids
+    );
+    
+    $wpdb->query($query);
+    
+    return $wpdb->rows_affected;
+}
+
+/**
+ * Get transactions with pagination
+ */
+private function get_transactions($per_page = 20, $page = 1) {
+    global $wpdb;
+    $log_table = $wpdb->prefix . 'wppps_transaction_log';
+    $sites_table = $wpdb->prefix . 'wppps_sites';
+    
+    // Calculate offset
+    $offset = ($page - 1) * $per_page;
+    
+    $query = "
+        SELECT l.*, s.site_name
+        FROM $log_table AS l
+        LEFT JOIN $sites_table AS s ON l.site_id = s.id
+        ORDER BY l.created_at DESC
+        LIMIT %d OFFSET %d
+    ";
+    
+    return $wpdb->get_results($wpdb->prepare($query, $per_page, $offset));
+}
+
 }

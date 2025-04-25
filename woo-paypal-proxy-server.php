@@ -1004,6 +1004,49 @@ if (!function_exists('wc_get_order_id_by_meta_key_and_value')) {
 }
 
 
+/**
+ * AJAX handler for deleting a single transaction
+ */
+function wppps_delete_transaction_handler() {
+    // Check nonce
+    $transaction_id = isset($_POST['transaction_id']) ? intval($_POST['transaction_id']) : 0;
+    check_ajax_referer('delete_transaction_' . $transaction_id, 'nonce');
+    
+    // Check permissions
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array(
+            'message' => __('Permission denied.', 'woo-paypal-proxy-server')
+        ));
+        wp_die();
+    }
+    
+    if (!$transaction_id) {
+        wp_send_json_error(array(
+            'message' => __('Invalid transaction ID.', 'woo-paypal-proxy-server')
+        ));
+        wp_die();
+    }
+    
+    // Get admin instance
+    $admin = new WPPPS_Admin();
+    
+    // Delete transaction
+    $result = $admin->delete_transaction($transaction_id);
+    
+    if ($result) {
+        wp_send_json_success(array(
+            'message' => __('Transaction deleted successfully.', 'woo-paypal-proxy-server')
+        ));
+    } else {
+        wp_send_json_error(array(
+            'message' => __('Failed to delete transaction.', 'woo-paypal-proxy-server')
+        ));
+    }
+    
+    wp_die();
+}
+add_action('wp_ajax_wppps_delete_transaction', 'wppps_delete_transaction_handler');
+
 
 /**
  * Plugin deactivation hook
