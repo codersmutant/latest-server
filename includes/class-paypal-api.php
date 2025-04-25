@@ -184,6 +184,9 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
         $item_total = 0;
         $tax_total = 0;
         $shipping_total = isset($custom_data['shipping_amount']) ? floatval($custom_data['shipping_amount']) : 0;
+        $shipping_tax = isset($custom_data['shipping_tax']) ? floatval($custom_data['shipping_tax']) : 0;
+        $tax_total += $shipping_tax;
+
         $this->log_info('Initial shipping amount: ' . $shipping_total);
         
         // Prepare items array for PayPal
@@ -205,7 +208,9 @@ public function create_order($amount, $currency = 'USD', $reference_id = '', $re
             
             // Add tax if provided
             if (!empty($item['tax_amount'])) {
-                $tax_total += floatval($item['tax_amount']);
+                $line_tax = floatval($item['tax_amount']);
+                $tax_total += $line_tax;
+                $this->log_info('Added line item tax: ' . $line_tax);
             }
             
             // Create the item for PayPal
