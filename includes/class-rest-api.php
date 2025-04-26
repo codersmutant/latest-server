@@ -236,12 +236,26 @@ private function get_test_data($site_id, $order_id) {
      * Render the PayPal buttons template
      */
     public function get_paypal_buttons($request) {
-    // Skip validation for testing
+    // validate using api key and secret
     $api_key = $request->get_param('api_key');
+    $api_secret_hash = $request->get_param('hash');
+    $get_timestamp_from_client = $request->get_param('timestamp');
     $site = null;
+    
     
     if (!empty($api_key)) {
         $site = $this->get_site_by_api_key($api_key);
+        $timestamp = $get_timestamp_from_client;
+        $xpected_hash = hash_hmac('sha256', $timestamp, $site->api_secret); 
+        
+         // Verify hash
+        if (!hash_equals($xpected_hash, $api_secret_hash)) {
+            return new WP_Error(
+                'invalid_hash',
+                __('Invalid authentication hash', 'woo-paypal-proxy-server'),
+                array('status' => 401)
+            );
+        }
         
         if (!$site) {
             header('Content-Type: text/html; charset=UTF-8');
