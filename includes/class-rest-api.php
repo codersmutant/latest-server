@@ -83,6 +83,30 @@ class WPPPS_REST_API {
         'callback' => array($this, 'store_test_data'),
         'permission_callback' => '__return_true',
     ));
+    
+    register_rest_route('wppps/v1', '/seller-protection/(?P<order_id>[A-Za-z0-9]+)', array(
+    'methods' => 'GET',
+    'callback' => array($this, 'get_seller_protection'),
+    'permission_callback' => '__return_true',
+    'args' => array(
+        'order_id' => array(
+            'required' => true,
+            'validate_callback' => function($param) {
+                return is_string($param);
+            }
+        ),
+        'api_key' => array(
+            'required' => true,
+        ),
+        'hash' => array(
+            'required' => true,
+        ),
+        'timestamp' => array(
+            'required' => true,
+        ),
+    ),
+));
+
     }
     
     
@@ -685,6 +709,10 @@ public function create_paypal_order($request) {
         // Capture the payment
         $capture = $this->paypal_api->capture_payment($params['paypal_order_id']);
         
+        $paypal_order_id = $params['paypal_order_id'];
+        
+        
+        
 
         
         if (is_wp_error($capture)) {
@@ -717,6 +745,15 @@ public function create_paypal_order($request) {
         if (!empty($capture['purchase_units'][0]['payments']['captures'][0]['id'])) {
             $transaction_id = $capture['purchase_units'][0]['payments']['captures'][0]['id'];
         }
+        
+        $seller_protection = 'UNKNOWN';
+    if (!empty($capture['purchase_units'][0]['payments']['captures'][0]['seller_protection']['status'])) {
+        $seller_protection = $capture['purchase_units'][0]['payments']['captures'][0]['seller_protection']['status'];
+        error_log('Found seller protection status: ' . $seller_protection);
+        
+        // Store it for later retrieval
+        $this->store_seller_protection($paypal_order_id, $seller_protection);
+    }
         
         // Return capture details
         return new WP_REST_Response(array(
@@ -974,5 +1011,60 @@ private function validate_request($request) {
         } else {
             error_log('[WooCommerce PayPal Proxy Server] Warning: ' . $message);
         }
+    }
+    
+    public function get_seller_protection($request) {
+    // Get parameters
+    $paypal_order_id = $request->get_param('order_id');
+    $api_key = $request->get_param('api_key');
+    $hash = $request->get_param('hash');
+    $timestamp = $request->get_param('timestamp');
+    
+    // Validate API key and security hash
+    $site = $this->get_site_by_api_key($api_key);
+    if (!$site) {
+        return new WP_Error(
+            'invalid_api_key',
+            __('Invalid API key', 'woo-paypal-proxy-server'),
+            array('status' => 401)
+        );
+    }
+    
+    // Validate hash for security
+    $hash_data = $timestamp . $paypal_order_id . $api_key;
+    $expected_hash = hash_hmac('sha256', $hash_data, $site->api_secret);
+    
+    if (!hash_equals($expected_hash, $hash)) {
+        return new WP_Error(
+            'invalid_hash',
+            __('Invalid security hash', 'woo-paypal-proxy-server'),
+            array('status' => 401)
+        );
+    }
+    
+    // Get the seller protection status from storage
+    $transient_key = 'wppps_seller_protection_' . $paypal_order_id;
+    $seller_protection = get_transient($transient_key);
+    
+    if ($seller_protection === false) {
+        $seller_protection = 'UNKNOWN'; // Default if not found
+    }
+    
+    error_log('Retrieved seller protection status for ' . $paypal_order_id . ': ' . $seller_protection);
+    
+    // Return the seller protection status
+    return new WP_REST_Response(array(
+        'success' => true,
+        'order_id' => $paypal_order_id,
+        'seller_protection' => $seller_protection
+    ), 200);
+}
+    
+    private function store_seller_protection($paypal_order_id, $status) {
+        // Use a transient that expires after 24 hours
+        $transient_key = 'wppps_seller_protection_' . $paypal_order_id;
+        set_transient($transient_key, $status, 24 * HOUR_IN_SECONDS);
+        error_log('Stored seller protection status for order ' . $paypal_order_id . ': ' . $status);
+        return true;
     }
 }

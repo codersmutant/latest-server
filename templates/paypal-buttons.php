@@ -604,7 +604,7 @@ $formatted_amount = number_format((float)$amount, 2, '.', ',');
                 if (cardForm) {
                     //console.log('Credit card form detected, resizing iframe');
                     // Add extra height to accommodate the form
-                    resizeIframe(document.body.scrollHeight + 150);
+                    resizeIframe(document.body.scrollHeight);
                 }
             }
         }
@@ -837,10 +837,10 @@ function adjustHeight() {
     // If card form is visible, use a larger height
     if (hasCardFormElements()) {
         // Add significantly more space for the card form
-        resizeIframe(document.body.scrollHeight + 250);
+        resizeIframe(document.body.scrollHeight);
     } else {
         // Regular height for PayPal buttons
-        resizeIframe(document.body.scrollHeight + 50);
+        resizeIframe(document.body.scrollHeight);
     }
 }
 
@@ -863,24 +863,7 @@ setInterval(adjustHeight, 1000);
 // Initial height adjustment
 setTimeout(adjustHeight, 500);
 
-/*
 
-// Watch for DOM changes and resize when payment form changes
-const observer = new MutationObserver(function(mutations) {
-    // Check if PayPal card form is visible
-    const cardForm = document.querySelector('.paypal-card-form');
-    if (cardForm) {
-        // Add a little extra height to accommodate the form
-        resizeIframe(document.body.scrollHeight + 50);
-    }
-});
-
-// Start observing
-observer.observe(document.body, { 
-    childList: true, 
-    subtree: true 
-});
-*/
     </script>
 </body>
 </html>
